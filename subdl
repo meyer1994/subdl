@@ -5,6 +5,7 @@ import io
 import gzip
 import base64
 import struct
+import logging
 
 from argparse import ArgumentParser, Action
 from xmlrpc.client import ServerProxy
@@ -62,6 +63,8 @@ class OpenSubServer(ServerProxy):
 
     def __init__(self, username='', password=''):
         super(OpenSubServer, self).__init__(OpenSubServer.URI)
+
+        logging.info('Logging in %s' % OpenSubServer.URI)
         login = self.LogIn(username, password, 'en', OpenSubServer.AGENT)
 
         if login['status'] != '200 OK':
@@ -80,8 +83,13 @@ class OpenSubServer(ServerProxy):
         Returns:
             List of items from the server.
         '''
+        logging.info('Hashing file')
         movie_hash = hash_file(filename)
+        logging.info('Hash: %s' % movie_hash)
+
+        logging.info('Getting file size')
         movie_size = os.path.getsize(filename)
+        logging.info('Size: %d' % movie_size)
 
         search_args = [{
             'sublanguageid': lang,
@@ -100,18 +108,22 @@ class OpenSubServer(ServerProxy):
         '''
         # donwloads
         sub_id = sub['IDSubtitleFile']
+        logging.info('Downloading sub %s' % sub_id)
         result = self.DownloadSubtitles(self.token, [sub_id])
         compressed_sub = result['data'][0]['data']
 
         # decodes
+        logging.info('Decoding sub %s' % sub_id)
         decoded_sub = base64.b64decode(compressed_sub)
 
         # unzips
+        logging.info('Unzipping sub %s' % sub_id)
         with gzip.open(io.BytesIO(decoded_sub)) as gz:
             unzipped_sub = gz.read()
 
         # encodes
         sub_encoding = sub['SubEncoding']
+        logging.info('Encoding sub %s to %s' % (sub_id, sub_encoding))
         return unzipped_sub.decode(sub_encoding)
 
     def get_languages(self, lang=''):
@@ -129,6 +141,12 @@ class ListLanguagesAction(Action):
             lang_name = lang['LanguageName']
             print('%s\t%s' % (lang_id, lang_name))
         raise SystemExit
+
+
+class SetVerbosityAction(Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        ''' Simply sets the configuration for the logger '''
+        logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 
 def _create_parser():
@@ -154,21 +172,38 @@ def _create_parser():
         nargs=0,
         action=ListLanguagesAction,
         help='list all the available languages to download')
+    parser.add_argument(
+        '-v',
+        '--verbose',
+        nargs=0,
+        action=SetVerbosityAction,
+        help='set verbosity')
     return parser
 
 
 if __name__ == '__main__':
     parser = _create_parser()
     options = parser.parse_args()
-    from pprint import pprint
+
     server = OpenSubServer()
     for file in options.files:
+        _, name = os.path.split(file)
+
+        logging.info('\nSearching movie %s' % name)
         result = server.search_by_hash(file, options.lang)
-        # filter invalid languages
+        logging.info('Found %d subs' % len(result))
+
+        if len(result) == 0:
+            logging.info('No results for %s. Continuing...' % name)
+            continue
+
+        logging.info('Selecting sub with best score')
         best_scored_sub = max(result, key=lambda s: s['Score'])
+
         sub_as_string = server.download_sub(best_scored_sub)
 
         path, _ = os.path.splitext(file)
         filename_out = '%s.%s' % (path, best_scored_sub['SubFormat'])
+        logging.info('Saving sub to %s' % filename_out)
         with open(filename_out, 'w') as f:
             f.write(sub_as_string)
