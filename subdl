@@ -72,13 +72,13 @@ class OpenSubServer(ServerProxy):
 
         self.token = login['token']
 
-    def search_by_hash(self, filename, lang):
+    def search_by_hash(self, filename, langs):
         '''
-        Search for the subtitles of passed lang based on the file
+        Search for the subtitles of passed langs based on the file
 
         Args:
             filename: File to get the hash and bytesize from
-            lang: Language, in 3-letter code ("eng", "por", for exampĺe).
+            langs: Language, in 3-letter code ("eng", "por", for exampĺe).
 
         Returns:
             List of items from the server.
@@ -92,44 +92,44 @@ class OpenSubServer(ServerProxy):
         logging.debug('Size: %d' % movie_size)
 
         search_args = [{
-            'sublanguageid': lang,
+            'sublanguageid': ','.join(langs),
             'moviehash': movie_hash,
             'moviebytesize': str(movie_size)
         }]
         return self.SearchSubtitles(self.token, search_args)['data']
 
-    def search_by_string(self, strings, lang):
+    def search_by_string(self, strings, langs):
         '''
         Searches subtitles based on a string.
 
         Args:
             strings: List of items to search.
-            lang: Language to search.
+            langs: Language to search.
 
         Returns:
             List of items from the server.
         '''
         query = ' '.join(strings)
         search_args = [{
-            'sublanguageid': lang,
+            'sublanguageid': ','.join(langs),
             'query': query
         }]
         logging.info('Searching for query "%s"' % query)
         return self.SearchSubtitles(self.token, search_args)['data']
 
-    def search_by_imdb(self, imdb_id, lang):
+    def search_by_imdb(self, imdb_id, langs):
         '''
         Search for subtitles based on IMDB id.
 
         Args:
             imdb_id: ID of the movie to search.
-            lang: Language to search for.
+            langs: Language to search for.
 
         Returns:
             List of items returned from the server.
         '''
         search_args = [{
-            'sublanguageid': lang,
+            'sublanguageid': ','.join(langs),
             'imdbid': imdb_id
         }]
         logging.info('Searching for IMDB id %s' % imdb_id)
@@ -202,9 +202,10 @@ def _create_parser():
         version='%s %s' % (NAME, VERSION))
     parser.add_argument(
         '--lang',
-        help='language in 3-letter code. For example: "eng por spa". Defaults '
-             'to %(default)s',
-        default='eng')
+        nargs='+',
+        help='languages in 3-letter code. For example: "eng por spa". '
+             'Defaults to %(default)s',
+        default=['eng'])
     parser.add_argument(
         '--search',
         nargs='+',
