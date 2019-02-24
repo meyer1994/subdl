@@ -85,17 +85,36 @@ class OpenSubServer(ServerProxy):
         '''
         logging.info('Hashing file')
         movie_hash = hash_file(filename)
-        logging.info('Hash: %s' % movie_hash)
+        logging.debug('Hash: %s' % movie_hash)
 
         logging.info('Getting file size')
         movie_size = os.path.getsize(filename)
-        logging.info('Size: %d' % movie_size)
+        logging.debug('Size: %d' % movie_size)
 
         search_args = [{
             'sublanguageid': lang,
             'moviehash': movie_hash,
             'moviebytesize': str(movie_size)
         }]
+        return self.SearchSubtitles(self.token, search_args)['data']
+
+    def search_by_string(self, strings, lang):
+        '''
+        Searches subtitles based on a string.
+
+        Args:
+            strings: List of items to search.
+            lang: Language to search.
+
+        Returns:
+            List of items from the server.
+        '''
+        query = ' '.join(strings)
+        search_args = [{
+            'sublanguageid': lang,
+            'query': query
+        }]
+        logging.info('Searching for query "%s"' % query)
         return self.SearchSubtitles(self.token, search_args)['data']
 
     def download_sub(self, sub):
@@ -169,6 +188,21 @@ def _create_parser():
              'to %(default)s',
         default='eng')
     parser.add_argument(
+        '--search',
+        nargs='+',
+        help='use search string to look for subtitles')
+    parser.add_argument(
+        '--imdb',
+        help='search by IMDB id')
+    parser.add_argument(
+        '--password',
+        help='opensubtitles.org password. Defaults to ""',
+        default='')
+    parser.add_argument(
+        '--username',
+        help='opensubtitles.org password. Defaults to ""',
+        default='')
+    parser.add_argument(
         '--list-languages',
         nargs=0,
         action=ListLanguagesAction,
@@ -186,13 +220,15 @@ if __name__ == '__main__':
     parser = _create_parser()
     options = parser.parse_args()
 
-    server = OpenSubServer()
+    server = OpenSubServer(options.username, options.password)
     for file in options.files:
         _, name = os.path.split(file)
 
-        logging.info('\nSearching movie %s' % name)
-        result = server.search_by_hash(file, options.lang)
-        logging.info('Found %d subs' % len(result))
+        # search
+        if options.search is not None:
+            result = server.search_by_string(options.search, options.lang)
+        else:
+            result = server.search_by_hash(file, options.lang)
 
         if len(result) == 0:
             logging.info('No results for %s. Continuing...' % name)
