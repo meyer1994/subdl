@@ -12,70 +12,6 @@ from xmlrpc.client import ServerProxy
 NAME = 'subdl'
 VERSION = '1.1.0'
 
-VERSION_INFO = '''\
-
-This is free software; see the source for copying conditions.  There is NO
-warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-
-http://code.google.com/p/subdl/'''
-
-
-class OpenSubServer(ServerProxy):
-    """docstring for OpenSubServer"""
-
-    URI = 'https://api.opensubtitles.org/xml-rpc'
-    AGENT = '%s %s' % (NAME, VERSION)
-
-    def __init__(self, username='', password=''):
-        super(OpenSubServer, self).__init__(OpenSubServer.URI)
-        login = self.LogIn(username, password, 'en', OpenSubServer.AGENT)
-
-        if login['status'] != '200 OK':
-            raise RuntimeError('Failed to connect: %s' % login['status'])
-
-        self.token = login['token']
-
-    def search_by_hash(self, filename, langs):
-        ''' Search for the subtitles of passed langs based on filename '''
-        movie_hash = hash_file(filename)
-        movie_size = os.path.getsize(filename)
-
-        search_args = [{
-            'sublanguageid': ','.join(langs),
-            'moviehash': movie_hash,
-            'moviebytesize': str(movie_size)
-        }]
-        return self.SearchSubtitles(self.token, search_args)['data']
-
-    def download_sub(self, sub):
-        ''' Downloads the passed sub id and returns it as a string '''
-        result = self.DownloadSubtitles(self.token, [sub['IDSubtitleFile']])
-        compressed_sub = result['data'][0]['data']
-
-        # decodes
-        decoded_sub = base64.b64decode(compressed_sub)
-
-        # unzips
-        with gzip.open(io.BytesIO(decoded_sub)) as gz:
-            return gz.read().decode(sub['SubEncoding'])
-
-    def get_languages(self, lang=''):
-        ''' Gets all languages available in the website '''
-        return self.GetSubLanguages(lang)['data']
-
-
-class ListLanguagesAction(Action):
-    ''' Simple class used to print all the values of the languages '''
-    def __call__(self, parser, namespace, values, option_string=None):
-        ''' Gets a list of languages from the server and prints it '''
-        server = OpenSubServer()
-        languages = server.get_languages()
-        for lang in languages:
-            lang_id = lang['SubLanguageID']
-            lang_name = lang['LanguageName']
-            print('%s\t%s' % (lang_id, lang_name))
-        raise SystemExit
-
 
 def hash_file(name):
     '''
@@ -118,6 +54,83 @@ def hash_file(name):
     return '%016x' % hash_val
 
 
+class OpenSubServer(ServerProxy):
+    """docstring for OpenSubServer"""
+
+    URI = 'https://api.opensubtitles.org/xml-rpc'
+    AGENT = '%s %s' % (NAME, VERSION)
+
+    def __init__(self, username='', password=''):
+        super(OpenSubServer, self).__init__(OpenSubServer.URI)
+        login = self.LogIn(username, password, 'en', OpenSubServer.AGENT)
+
+        if login['status'] != '200 OK':
+            raise RuntimeError('Failed to connect: %s' % login['status'])
+
+        self.token = login['token']
+
+    def search_by_hash(self, filename, lang):
+        '''
+        Search for the subtitles of passed lang based on the file
+
+        Args:
+            filename: File to get the hash and bytesize from
+            lang: Language, in 3-letter code ("eng", "por", for exampĺe).
+
+        Returns:
+            List of items from the server.
+        '''
+        movie_hash = hash_file(filename)
+        movie_size = os.path.getsize(filename)
+
+        search_args = [{
+            'sublanguageid': lang,
+            'moviehash': movie_hash,
+            'moviebytesize': str(movie_size)
+        }]
+        return self.SearchSubtitles(self.token, search_args)['data']
+
+    def download_sub(self, sub):
+        '''
+        Downloads the passed sub id and returns it as a string
+
+        Args:
+            sub: Subtitle object returned by the server. It is used to get the
+            ID of the sub to download, and the encoding to use.
+        '''
+        # donwloads
+        sub_id = sub['IDSubtitleFile']
+        result = self.DownloadSubtitles(self.token, [sub_id])
+        compressed_sub = result['data'][0]['data']
+
+        # decodes
+        decoded_sub = base64.b64decode(compressed_sub)
+
+        # unzips
+        with gzip.open(io.BytesIO(decoded_sub)) as gz:
+            unzipped_sub = gz.read()
+
+        # encodes
+        sub_encoding = sub['SubEncoding']
+        return unzipped_sub.decode(sub_encoding)
+
+    def get_languages(self, lang=''):
+        ''' Gets all languages available in the website '''
+        return self.GetSubLanguages(lang)['data']
+
+
+class ListLanguagesAction(Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        ''' Gets a list of languages from the server and prints it '''
+        server = OpenSubServer()
+        languages = server.get_languages()
+        for lang in languages:
+            lang_id = lang['SubLanguageID']
+            lang_name = lang['LanguageName']
+            print('%s\t%s' % (lang_id, lang_name))
+        raise SystemExit
+
+
 def _create_parser():
     ''' Creates parser for CLI '''
     parser = ArgumentParser(
@@ -152,7 +165,6 @@ if __name__ == '__main__':
     for file in options.files:
         result = server.search_by_hash(file, options.lang)
         # filter invalid languages
-        result = [r for r in result if r['SubLanguageID'] == options.lang]
         best_scored_sub = max(result, key=lambda s: s['Score'])
         sub_as_string = server.download_sub(best_scored_sub)
 
