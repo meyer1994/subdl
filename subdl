@@ -2,6 +2,7 @@
 
 import os
 import io
+import re
 import gzip
 import base64
 import struct
@@ -117,22 +118,23 @@ class OpenSubServer(ServerProxy):
         logging.info('Searching for query "%s"' % query)
         return self.SearchSubtitles(self.token, search_args)['data']
 
-    def search_by_imdb(self, imdb_id, langs):
+    def search_by_imdb(self, imdb, langs):
         '''
         Search for subtitles based on IMDB id.
 
         Args:
-            imdb_id: ID of the movie to search.
+            imdb: It can be an IMDB link, partial link etc.
             langs: Languages, in 3-letter code ("eng", "por", for exampĺe).
 
         Returns:
             List of items returned from the server.
         '''
+        the_id = re.findall(r'(t+)?(\d+)', imdb)[0][1]
         search_args = [{
             'sublanguageid': ','.join(langs),
-            'imdbid': imdb_id
+            'imdbid': the_id
         }]
-        logging.info('Searching for IMDB id %s' % imdb_id)
+        logging.info('Searching for IMDB id %s' % the_id)
         return self.SearchSubtitles(self.token, search_args)['data']
 
     def download_sub(self, sub):
