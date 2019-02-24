@@ -132,9 +132,10 @@ class OpenSubServer(ServerProxy):
 
 
 class ListLanguagesAction(Action):
-    def __call__(self, parser, namespace, values, option_string=None):
+    def __call__(self, *args, **kwargs):
         ''' Gets a list of languages from the server and prints it '''
         server = OpenSubServer()
+        logging.info('Getting languages from server')
         languages = server.get_languages()
         for lang in languages:
             lang_id = lang['SubLanguageID']
@@ -144,7 +145,7 @@ class ListLanguagesAction(Action):
 
 
 class SetVerbosityAction(Action):
-    def __call__(self, parser, namespace, values, option_string=None):
+    def __call__(self, nargs=0, *args, **kwargs):
         ''' Simply sets the configuration for the logger '''
         logging.basicConfig(level=logging.INFO, format='%(message)s')
 
@@ -152,16 +153,16 @@ class SetVerbosityAction(Action):
 def _create_parser():
     ''' Creates parser for CLI '''
     parser = ArgumentParser(
-        description='This is a rewrite of the tool "subdl". It is a simplified '
-                    'version of it. It only searches by hash.')
+        description='This is a rewrite of the tool "subdl". It is a simplified'
+                    ' version of it. It only searches by hash.')
     parser.add_argument(
         'files',
-        help='movie files to download subtitles for. You may use globs',
+        help='video files to download subtitles for. You may use globs',
         nargs='+')
     parser.add_argument(
         '--version',
         action='version',
-        version='%(prog)s ' + VERSION)
+        version='%s %s' % (NAME, VERSION))
     parser.add_argument(
         '--lang',
         help='language in 3-letter code. For example: "eng por spa". Defaults '
