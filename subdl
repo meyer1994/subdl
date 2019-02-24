@@ -51,7 +51,7 @@ Options:
   '''
 
 NAME = 'subdl'
-VERSION = '1.1.1'
+VERSION = '1.1.0'
 
 VERSION_INFO = '''\
 
@@ -90,6 +90,41 @@ BLACKLIST = [
     '^_$',
     '^- _$',
 ]
+
+
+class OpenSubSearcher(xmlrpc.client.ServerProxy):
+    """docstring for OpenSubSearcher"""
+
+    URI = 'https://api.opensubtitles.org/xml-rpc'
+    AGENT = '%s %s' % (NAME, VERSION)
+
+    def __init__(self, username='', password=''):
+        super(OpenSubSearcher, self).__init__(OpenSubSearcher.URI)
+        login = self.LogIn(username, password, 'en', self.AGENT)
+
+        if login['status'] != '200 OK':
+            raise RuntimeError('Failed to connect: %s' % login['status'])
+
+        self.token = login['token']
+
+    def search_by_hash(self, filename, langs):
+        ''' Search for the subtitles of passed langs based on filename '''
+        movie_hash = hash_file(filename)
+        movie_size = os.path.getsize(filename)
+        print('Searching for subtitles for moviehash=%s' % movie_hash)
+
+        search_args = [[{
+            'sublanguageid': langs,
+            'moviehash': movie_hash,
+            'moviebytesize': str(movie_size)
+        }]]
+        try:
+            results = self.SearchSubtitles(self.token, search_args)
+        except Exception as e:
+            raise SystemExit("Error in XMLRPC SearchSubtitles call: %s" % e)
+
+        return results['data']
+
 
 class Options: pass
 options = Options()
@@ -503,30 +538,45 @@ def main(args):
         raise SystemExit("One or more subtitles were not found.")
 
 
-def isnumber(value):
-    return is_number(value)
+def hash_file(name):
+    '''
+    This function was not changed from the original.
 
+    It was only reformatted. It is based on the version on OpenSubtitles own
+    implementation.
 
-def is_number(value):
-    ''' Checks if the passed values is a positive number '''
-    try:
-        return int(value) > 0
-    except ValueError:
-        return False
+    Check:
+        http://trac.opensubtitles.org/projects/opensubtitles/wiki/HashSourceCodes
 
+    Args:
+        name: Name of the file to hash.
 
-def handle_download_arg(value):
-    ''' Function used to handle the download value of the --download arg '''
-    # acceptable values
-    vals = ['all', 'first', 'query', 'best-rating', 'most-downloaded']
-    if value in vals:
-        return value
+    Returns:
+        Base16 hash of the file, in a string.
+    '''
+    longlongformat = '<Q'
+    bytesize = struct.calcsize(longlongformat)
+    assert bytesize == 8
 
-    if is_number(value):
-        return int(value)
+    filesize = os.path.getsize(name)
+    hash_val = filesize
 
-    raise ValueError('Argument to --download must be numeric subtitle id or '
-                     'one: all, first, query, none')
+    if filesize < 65536 * 2:
+        raise Exception('Error hashing %s: file too small' % name)
+
+    with open(name, 'rb') as f:
+        for x in range(int(65536 / bytesize)):
+            hash_val += struct.unpack(longlongformat, f.read(bytesize))[0]
+            hash_val &= 0xFFFFFFFFFFFFFFFF
+
+        # go to end of file
+        f.seek(filesize - 65536, 0)
+
+        for x in range(int(65536 / bytesize)):
+            hash_val += struct.unpack(longlongformat, f.read(bytesize))[0]
+            hash_val &= 0xFFFFFFFFFFFFFFFF
+
+    return '%016x' % hash_val
 
 
 def _create_parser():
@@ -539,89 +589,26 @@ def _create_parser():
                     'highest-rated result in the requested language and save '
                     'it to the appropriate filename.')
     parser.add_argument(
+        'files',
+        help='Movie files to download subtitles for. You may use globs',
+        nargs='+')
+    parser.add_argument(
         '--version',
         action='version',
-        version='%(prog)s 1.1.1')
+        version='%(prog)s ' + VERSION)
     parser.add_argument(
         '--lang',
-        help='List of languages in 3-letter code, e.g. "eng spa fre", or '
-             '"all" for all.  Default is "eng".',
+        help='list of languages in 3-letter code, e.g. "eng, spa, fre", or '
+             '"all" for all.  Default is %(default)s',
         nargs='+',
         default=['eng'])
-    parser.add_argument(
-        '--list-languages',
-        help='List available languages and exit.',
-        action='store_true')
-    parser.add_argument(
-        '--username',
-        help='opensubtitles.org username')
-    parser.add_argument(
-        '--password',
-        help='opensubtitles.org password')
-    parser.add_argument(
-        '--search',
-        help='Use search string to look for subtitles.')
-    parser.add_argument(
-        '--download',
-        help='Download a particular subtitle by numeric ID, a positive int. '
-             'Download the "first" search result [default]. '
-             'Download "all" search results. '
-             'Download the result with "best-rating". '
-             'Download the "most-downloaded" result. '
-             '"Query" which search result to download.',
-        default='first',
-        type=handle_download_arg)
-    parser.add_argument(
-        '-n',
-        help='Display search results and exit.',
-        action='store_true')
-    parser.add_argument(
-        '--output',
-        help='Output to specified output filename.  Can include the '
-             'following format specifiers: '
-             '{I} subtitle id; '
-             '{m} movie file base; {M} movie file extension; '
-             '{s} subtitle file base; {S} subtitle file extension; '
-             '{l} language (English); {L} language (2-letter ISO639); '
-             'Default is "{m}.{S}"; if multiple languages are searched, '
-             'then the default is "{m}.{L}.{S}"; if --download=all, then '
-             'the default is "{m}.{L}.{I}.{S}".)',
-        default='{m}.{S}')
-    parser.add_argument(
-        '--existing',
-        help='"Abort" if output filename already exists [default]. '
-             '"Exit" gracefully if output filename already exists. '
-             '"Overwrite" if output filename already exists. '
-             '"Query" whether to overwrite.',
-        choices=['abort', 'bypass', 'overwrite', 'query'])
-    parser.add_argument(
-        '--imdb-id',
-        help='Query by IMDB id. Hash is tried first unless --force-imdb is '
-             'used. IMDB URLs are also accepted.',
-        type=int)
-    parser.add_argument(
-        '--force-imdb',
-        help='Force IMDB search. --imdb-id must be specified.',
-        action='store_true')
-    parser.add_argument(
-        '--force-filename',
-        help='Force search using filename.',
-        action='store_true')
-    parser.add_argument(
-        '--filter',
-        help='Filter blacklisted texts from subtitle.',
-        action='store_true')
-    parser.add_argument(
-        '-i',
-        '--interactive',
-        help='Equivalent to --download=query --existing=query.',
-        action='store_true')
     return parser
 
 
 if __name__ == '__main__':
     parser = _create_parser()
-    r = parser.parse_args()
+    result = parser.parse_args()
 
-main(sys.argv[1:])
-
+    searcher = OpenSubSearcher()
+    r = searcher.search_by_hash(result.files[0], 'eng')
+    print(r)
