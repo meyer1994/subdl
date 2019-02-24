@@ -117,6 +117,24 @@ class OpenSubServer(ServerProxy):
         logging.info('Searching for query "%s"' % query)
         return self.SearchSubtitles(self.token, search_args)['data']
 
+    def search_by_imdb(self, imdb_id, lang):
+        '''
+        Search for subtitles based on IMDB id.
+
+        Args:
+            imdb_id: ID of the movie to search.
+            lang: Language to search for.
+
+        Returns:
+            List of items returned from the server.
+        '''
+        search_args = [{
+            'sublanguageid': lang,
+            'imdbid': imdb_id
+        }]
+        logging.info('Searching for IMDB id %s' % imdb_id)
+        return self.SearchSubtitles(self.token, search_args)['data']
+
     def download_sub(self, sub):
         '''
         Downloads the passed sub id and returns it as a string
@@ -227,6 +245,10 @@ if __name__ == '__main__':
         # search
         if options.search is not None:
             result = server.search_by_string(options.search, options.lang)
+        # imdb id
+        elif options.imdb is not None:
+            result = server.search_by_imdb(options.imdb, options.lang)
+        # hash
         else:
             result = server.search_by_hash(file, options.lang)
 
