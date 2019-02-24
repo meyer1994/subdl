@@ -66,6 +66,8 @@ import xmlrpc.client
 import io, gzip, base64
 import getopt
 import re
+import glob
+import argparse
 
 OSDB_SERVER_URI = "https://api.opensubtitles.org/xml-rpc"
 xmlrpc_server = None
@@ -92,6 +94,7 @@ BLACKLIST = [
 ]
 
 
+
 class OpenSubSearcher(xmlrpc.client.ServerProxy):
     """docstring for OpenSubSearcher"""
 
@@ -100,7 +103,7 @@ class OpenSubSearcher(xmlrpc.client.ServerProxy):
 
     def __init__(self, username='', password=''):
         super(OpenSubSearcher, self).__init__(OpenSubSearcher.URI)
-        login = self.LogIn(username, password, 'en', self.AGENT)
+        login = self.LogIn(username, password, 'en', OpenSubSearcher.AGENT)
 
         if login['status'] != '200 OK':
             raise RuntimeError('Failed to connect: %s' % login['status'])
@@ -111,19 +114,29 @@ class OpenSubSearcher(xmlrpc.client.ServerProxy):
         ''' Search for the subtitles of passed langs based on filename '''
         movie_hash = hash_file(filename)
         movie_size = os.path.getsize(filename)
-        print('Searching for subtitles for moviehash=%s' % movie_hash)
 
-        search_args = [[{
-            'sublanguageid': langs,
+        search_args = [{
+            'sublanguageid': ','.join(langs),
             'moviehash': movie_hash,
             'moviebytesize': str(movie_size)
-        }]]
-        try:
-            results = self.SearchSubtitles(self.token, search_args)
-        except Exception as e:
-            raise SystemExit("Error in XMLRPC SearchSubtitles call: %s" % e)
+        }]
+        return self.SearchSubtitles(self.token, search_args)['data']
 
-        return results['data']
+    def get_languages(self):
+        return self.GetSubLanguages('')['data']
+
+
+class ListLanguagesAction(argparse.Action):
+    ''' Simple class used to print all the values of the languages '''
+    def __call__(self, parser, namespace, values, option_string=None):
+        ''' Gets a list of languages from the server and prints it '''
+        server = OpenSubSearcher()
+        languages = server.get_languages()
+        for lang in languages:
+            lang_id = lang['SubLanguageID']
+            lang_name = lang['LanguageName']
+            print('%s\t%s' % (lang_id, lang_name))
+        raise SystemExit
 
 
 class Options: pass
@@ -581,16 +594,12 @@ def hash_file(name):
 
 def _create_parser():
     ''' Creates parser for CLI '''
-    from argparse import ArgumentParser
-    parser = ArgumentParser(
-        description='Subdl is a command-line tool for downloading subtitles '
-                    'from opensubtitles.org. By default, it will search for '
-                    'English subtitles, display the results, download the '
-                    'highest-rated result in the requested language and save '
-                    'it to the appropriate filename.')
+    parser = argparse.ArgumentParser(
+        description='This is a rewrite of the tool "subdl". It is a simplified '
+                    'version of it. It only searches by hash.')
     parser.add_argument(
         'files',
-        help='Movie files to download subtitles for. You may use globs',
+        help='movie files to download subtitles for. You may use globs',
         nargs='+')
     parser.add_argument(
         '--version',
@@ -598,17 +607,18 @@ def _create_parser():
         version='%(prog)s ' + VERSION)
     parser.add_argument(
         '--lang',
-        help='list of languages in 3-letter code, e.g. "eng, spa, fre", or '
-             '"all" for all.  Default is %(default)s',
+        help='list of languages in 3-letter code. For example: "eng por spa". '
+        'Defaults to %(default)s',
         nargs='+',
         default=['eng'])
+    parser.add_argument(
+        '--list-languages',
+        nargs=0,
+        action=ListLanguagesAction,
+        help='list all the available languages to download')
     return parser
 
 
 if __name__ == '__main__':
     parser = _create_parser()
     result = parser.parse_args()
-
-    searcher = OpenSubSearcher()
-    r = searcher.search_by_hash(result.files[0], 'eng')
-    print(r)
