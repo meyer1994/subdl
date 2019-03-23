@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import io
 import re
 import gzip
 import base64
@@ -57,7 +56,7 @@ def hash_file(name):
 
 
 class OpenSubServer(ServerProxy):
-    """docstring for OpenSubServer"""
+    ''' Server class to talk to OpenSubtitles server '''
 
     URI = 'https://api.opensubtitles.org/xml-rpc'
     AGENT = '%s %s' % (NAME, VERSION)
@@ -123,7 +122,7 @@ class OpenSubServer(ServerProxy):
         Search for subtitles based on IMDB id.
 
         Args:
-            imdb: It can be an IMDB link, partial link etc.
+            imdb: It can be an IMDB link, id, partial link etc.
             langs: Languages, in 3-letter code ("eng", "por", for exampĺe).
 
         Returns:
@@ -157,8 +156,7 @@ class OpenSubServer(ServerProxy):
 
         # unzips
         logging.info('Unzipping sub %s' % sub_id)
-        with gzip.open(io.BytesIO(decoded_sub)) as gz:
-            unzipped_sub = gz.read()
+        unzipped_sub = gzip.decompress(decoded_sub)
 
         # encodes
         sub_encoding = sub['SubEncoding']
@@ -193,7 +191,8 @@ def _create_parser():
     ''' Creates parser for CLI '''
     parser = ArgumentParser(
         description='This is a rewrite of the tool "subdl". It is a simplified'
-                    ' version of it. It only searches by hash.')
+                    ' version of it. You can search by IMDB id, link, text '
+                    'file, language etc.')
     parser.add_argument(
         'files',
         help='video files to download subtitles for. You may use globs',
@@ -255,15 +254,19 @@ if __name__ == '__main__':
         else:
             result = server.search_by_hash(file, options.lang)
 
+        # no results
         if len(result) == 0:
             logging.info('No results for %s. Continuing...' % name)
             continue
 
+        # best scored
         logging.info('Selecting sub with best score')
         best_scored_sub = max(result, key=lambda s: s['Score'])
 
+        # downloading
         sub_as_string = server.download_sub(best_scored_sub)
 
+        # saving
         path, _ = os.path.splitext(file)
         filename_out = '%s.%s' % (path, best_scored_sub['SubFormat'])
         logging.info('Saving sub to %s' % filename_out)
