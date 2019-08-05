@@ -5,42 +5,36 @@ import re
 import gzip
 import base64
 import struct
-import logging
 
-from argparse import ArgumentParser, Action, RawTextHelpFormatter
+from argparse import (
+    ArgumentParser,
+    Action,
+    RawTextHelpFormatter,
+    ArgumentTypeError
+)
 from xmlrpc.client import ServerProxy
 
 NAME = 'subdl'
 VERSION = '1.1.0'
 
 
-def hash_file(name):
-    '''
-    This function was not changed from the original.
-
-    It was only reformatted. It is based on the version on OpenSubtitles own
-    implementation.
+def hash_file(filename):
+    ''' Hashes the file passed. Uses OpenSubtitles implementation
 
     Check:
         http://trac.opensubtitles.org/projects/opensubtitles/wiki/HashSourceCodes
-
-    Args:
-        name: Name of the file to hash.
-
-    Returns:
-        Base16 hash of the file, in a string.
     '''
     longlongformat = '<Q'
     bytesize = struct.calcsize(longlongformat)
     assert bytesize == 8
 
-    filesize = os.path.getsize(name)
+    filesize = os.path.getsize(filename)
     hash_val = filesize
 
     if filesize < 65536 * 2:
-        raise Exception('Error hashing %s: file too small' % name)
+        raise Exception('Error hashing %s: file too small' % filename)
 
-    with open(name, 'rb') as f:
+    with open(filename, 'rb') as f:
         for x in range(int(65536 / bytesize)):
             hash_val += struct.unpack(longlongformat, f.read(bytesize))[0]
             hash_val &= 0xFFFFFFFFFFFFFFFF
@@ -56,6 +50,7 @@ def hash_file(name):
 
 
 def download(value):
+    ''' Download argument `type` '''
     try:
         return int(value)
     except ValueError:
@@ -63,7 +58,7 @@ def download(value):
 
     vals = {'first', 'all', 'best-rating', 'most-downloaded', 'query', 'none'}
     if value not in vals:
-        raise ValueError('Download value not valid')
+        raise ArgumentTypeError('Download value %s is not valid' % value)
 
     return value
 
@@ -75,9 +70,9 @@ class OpenSubServer(ServerProxy):
     AGENT = '%s %s' % (NAME, VERSION)
 
     def __init__(self, username='', password=''):
+        ''' Creates class and tries to login '''
         super(OpenSubServer, self).__init__(OpenSubServer.URI)
 
-        logging.info('Logging in %s' % OpenSubServer.URI)
         login = self.LogIn(username, password, 'en', OpenSubServer.AGENT)
 
         if login['status'] != '200 OK':
@@ -86,23 +81,10 @@ class OpenSubServer(ServerProxy):
         self.token = login['token']
 
     def search_by_hash(self, filename, langs):
-        '''
-        Search for the subtitles of passed langs based on the file
-
-        Args:
-            filename: File to get the hash and bytesize from
-            langs: Languages, in 3-letter code ("eng", "por", for exampĺe).
-
-        Returns:
-            List of items from the server.
-        '''
-        logging.info('Hashing file')
+        ''' Search by hash for the languages '''
         movie_hash = hash_file(filename)
-        logging.debug('Hash: %s' % movie_hash)
 
-        logging.info('Getting file size')
         movie_size = os.path.getsize(filename)
-        logging.debug('Size: %d' % movie_size)
 
         search_args = [{
             'sublanguageid': ','.join(langs),
@@ -112,68 +94,38 @@ class OpenSubServer(ServerProxy):
         return self.SearchSubtitles(self.token, search_args)['data']
 
     def search_by_string(self, strings, langs):
-        '''
-        Searches subtitles based on a string.
-
-        Args:
-            strings: List of items to search.
-            langs: Languages, in 3-letter code ("eng", "por", for exampĺe).
-
-        Returns:
-            List of items from the server.
-        '''
+        ''' Search by string for the languages '''
         query = ' '.join(strings)
         search_args = [{
             'sublanguageid': ','.join(langs),
             'query': query
         }]
-        logging.info('Searching for query "%s"' % query)
         return self.SearchSubtitles(self.token, search_args)['data']
 
     def search_by_imdb(self, imdb, langs):
-        '''
-        Search for subtitles based on IMDB id.
-
-        Args:
-            imdb: It can be an IMDB link, id, partial link etc.
-            langs: Languages, in 3-letter code ("eng", "por", for exampĺe).
-
-        Returns:
-            List of items returned from the server.
-        '''
+        ''' Search by imdb ID for the languages '''
         the_id = re.findall(r'(t+)?(\d+)', imdb)[0][1]
         search_args = [{
             'sublanguageid': ','.join(langs),
             'imdbid': the_id
         }]
-        logging.info('Searching for IMDB id %s' % the_id)
         return self.SearchSubtitles(self.token, search_args)['data']
 
     def download_sub(self, sub):
-        '''
-        Downloads the passed sub id and returns it as a string
-
-        Args:
-            sub: Subtitle object returned by the server. It is used to get the
-            ID of the sub to download, and the encoding to use.
-        '''
+        ''' Download from sub object '''
         # donwloads
         sub_id = sub['IDSubtitleFile']
-        logging.info('Downloading sub %s' % sub_id)
         result = self.DownloadSubtitles(self.token, [sub_id])
         compressed_sub = result['data'][0]['data']
 
         # decodes
-        logging.info('Decoding sub %s' % sub_id)
         decoded_sub = base64.b64decode(compressed_sub)
 
         # unzips
-        logging.info('Unzipping sub %s' % sub_id)
         unzipped_sub = gzip.decompress(decoded_sub)
 
         # encodes
         sub_encoding = sub['SubEncoding']
-        logging.info('Encoding sub %s to %s' % (sub_id, sub_encoding))
         return unzipped_sub.decode(sub_encoding)
 
     def get_languages(self, lang=''):
@@ -185,7 +137,6 @@ class ListLanguagesAction(Action):
     def __call__(self, *args, **kwargs):
         ''' Gets a list of languages from the server and prints it '''
         server = OpenSubServer()
-        logging.info('Getting languages from server')
         languages = server.get_languages()
         for lang in languages:
             lang_id = lang['SubLanguageID']
@@ -322,11 +273,9 @@ if __name__ == '__main__':
 
         # no results
         if len(result) == 0:
-            logging.info('No results for %s. Continuing...' % name)
             continue
 
         # best scored
-        logging.info('Selecting sub with best score')
         best_scored_sub = max(result, key=lambda s: s['Score'])
 
         # downloading
@@ -335,6 +284,5 @@ if __name__ == '__main__':
         # saving
         path, _ = os.path.splitext(file)
         filename_out = '%s.%s' % (path, best_scored_sub['SubFormat'])
-        logging.info('Saving sub to %s' % filename_out)
         with open(filename_out, 'w') as f:
             f.write(sub_as_string)
