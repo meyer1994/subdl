@@ -7,7 +7,7 @@ import base64
 import struct
 import logging
 
-from argparse import ArgumentParser, Action
+from argparse import ArgumentParser, Action, RawTextHelpFormatter
 from xmlrpc.client import ServerProxy
 
 NAME = 'subdl'
@@ -53,6 +53,19 @@ def hash_file(name):
             hash_val &= 0xFFFFFFFFFFFFFFFF
 
     return '%016x' % hash_val
+
+
+def download(value):
+    try:
+        return int(value)
+    except ValueError:
+        pass
+
+    vals = {'first', 'all', 'best-rating', 'most-downloaded', 'query', 'none'}
+    if value not in vals:
+        raise ValueError('Download value not valid')
+
+    return value
 
 
 class OpenSubServer(ServerProxy):
@@ -181,58 +194,111 @@ class ListLanguagesAction(Action):
         raise SystemExit
 
 
-class SetVerbosityAction(Action):
-    def __call__(self, nargs=0, *args, **kwargs):
-        ''' Simply sets the configuration for the logger '''
-        logging.basicConfig(level=logging.INFO, format='%(message)s')
-
-
 def _create_parser():
     ''' Creates parser for CLI '''
     parser = ArgumentParser(
-        description='This is a rewrite of the tool "subdl". It is a simplified'
-                    ' version of it. You can search by IMDB id, link, text '
-                    'file, language etc.')
+        description=(
+            'Subdl is a command-line tool for downloading subtitles from '
+            'opensubtitles.org.'
+            '\n\n'
+            'By default, it will search for English subtitles, display the '
+            'results, download the highest-rated result in the requested '
+            'language and save it to the appropriate filename.'
+        ),
+        formatter_class=RawTextHelpFormatter)
     parser.add_argument(
         'files',
         help='video files to download subtitles for. You may use globs',
         nargs='+')
     parser.add_argument(
         '--version',
+        help='print version and exit',
         action='version',
         version='%s %s' % (NAME, VERSION))
     parser.add_argument(
         '--lang',
         nargs='+',
-        help='languages in 3-letter code. For example: "eng por spa". '
-             'Defaults to %(default)s',
+        help=(
+            'languages in 3-letter code. For example: "eng por spa". Use '
+            '"all"for all languages. Defaults to "eng"'
+        ),
         default=['eng'])
-    parser.add_argument(
-        '--search',
-        nargs='+',
-        help='use search string to look for subtitles')
-    parser.add_argument(
-        '--imdb',
-        help='search by IMDB id')
-    parser.add_argument(
-        '--password',
-        help='opensubtitles.org password. Defaults to ""',
-        default='')
-    parser.add_argument(
-        '--username',
-        help='opensubtitles.org password. Defaults to ""',
-        default='')
     parser.add_argument(
         '--list-languages',
         nargs=0,
         action=ListLanguagesAction,
-        help='list all the available languages to download')
+        help='list available languages adn exit')
     parser.add_argument(
-        '-v',
-        '--verbose',
-        nargs=0,
-        action=SetVerbosityAction,
-        help='set verbosity')
+        '--username',
+        metavar='USER',
+        help='opensubtitles.org username. Defaults to ""',
+        default='')
+    parser.add_argument(
+        '--password',
+        metavar='PASS',
+        help='opensubtitles.org password. Defaults to ""',
+        default='')
+    parser.add_argument(
+        '--search',
+        nargs=1,
+        help='use search string to look for subtitles')
+    parser.add_argument(
+        '--download',
+        nargs=1,
+        help=(
+            'ID: Download a particular subtitle by numeric ID\n'
+            'first: Download the first search result [default]\n'
+            'all: Download all search results\n'
+            'best-rating: Download the result with best rating\n'
+            'most-downloaded: Download the most downloaded result\n'
+            'query: Query which search result to download\n'
+            'none: Display search results and exit\n'
+        ),
+        type=download,
+        default='first')
+    parser.add_argument(
+        '--output',
+        help=(
+            'Output to specified output filename.  Can include the\n'
+            'following format specifiers:\n'
+            '{I} subtitle id\n'
+            '{m} movie file base     {M} movie file extension\n'
+            '{s} subtitle file base  {S} subtitle file extension\n'
+            '{l} language (English)  {L} language (2-letter ISO639)\n'
+            'Default is "{m}.{S}"; if multiple languages are searched,\n'
+            'then the default is "{m}.{L}.{S}"; if --download=all, then\n'
+            'the default is "{m}.{L}.{I}.{S}"'))
+    parser.add_argument(
+        '--existing',
+        metavar='ACTION',
+        nargs=1,
+        help=(
+            'abort: Abort if output filename already exists [default]\n'
+            'bypass: Exit gracefully if output filename already exists\n'
+            'overwrite: Overwrite if output filename already exists\n'
+            'query: Query whether to overwrite'))
+    parser.add_argument(
+        '--imdb-id',
+        metavar='ID',
+        help='query by IMDB id. Hash is tried first unless --force-imdb')
+    parser.add_argument(
+        '--force-imdb',
+        action='store_true',
+        help='force IMDB search. --imdb-id must be specified')
+    parser.add_argument(
+        '--force-filename',
+        action='store_true',
+        help='force search using filename')
+    parser.add_argument(
+        '--filter',
+        action='store_true',
+        help='filter blacklisted texts from subtitle')
+    parser.add_argument(
+        '--interactive',
+        '-i',
+        action='store_true',
+        help='equivalent to --download=query --existing=query')
+
     return parser
 
 
