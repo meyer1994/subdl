@@ -142,6 +142,12 @@ class ListLanguagesAction(Action):
         raise SystemExit
 
 
+class SetVerbosityAction(Action):
+    def __call__(self, *args, **kwargs):
+        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(format='%(message)s')
+
+
 def _create_parser():
     """ Creates parser for CLI """
     parser = ArgumentParser(
@@ -165,7 +171,7 @@ def _create_parser():
         version='alpha'
     )
     parser.add_argument(
-        '--lang',
+        '--langs',
         nargs='+',
         help=(
             'Language, in 3 letter codes. Eg. `eng`, `por` or `spa`. Defaults '
@@ -178,6 +184,30 @@ def _create_parser():
         help='Lists all languages available and exits',
         action=ListLanguagesAction
     )
+    parser.add_argument(
+        '--user',
+        help=(
+            'Username to use when logging in to OpenSubtitles. Defaults to '
+            'empty string'
+        ),
+        default=''
+    )
+    parser.add_argument(
+        '--pass',
+        dest='passw',
+        help=(
+            'Password to use when logging in to OpenSubtitles. Defaults to '
+            'empty string'
+        ),
+        default=''
+    )
+    parser.add_argument(
+        '-v',
+        '--verbose',
+        help='Set verbosity',
+        nargs=0,
+        action=SetVerbosityAction
+    )
     return parser
 
 
@@ -186,7 +216,7 @@ if __name__ == '__main__':
     parsed = parser.parse_args()
 
     # Create server
-    server = OpenSubServer('', '', parsed.lang)
+    server = OpenSubServer(parsed.user, parsed.passw, parsed.langs)
     server.login()
 
     for file in parsed.files:
