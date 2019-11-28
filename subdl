@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
 
 import os
-import re
 import gzip
 import base64
 import struct
+import logging
 
-from argparse import (
-    ArgumentParser,
-    Action,
-    RawTextHelpFormatter,
-    ArgumentTypeError
-)
+from argparse import ArgumentParser, Action
 from xmlrpc.client import ServerProxy
 
-NAME = 'subdl'
-VERSION = '1.1.0'
+
+logger = logging.getLogger('simplesubdl')
+logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 
 def hash_file(filename):
-    ''' Hashes the file passed. Uses OpenSubtitles implementation
+    """
+    Hashes the file passed. Uses OpenSubtitles implementation
 
-    Check:
-        http://trac.opensubtitles.org/projects/opensubtitles/wiki/HashSourceCodes
-    '''
+    Adapted from:
+        https://trac.opensubtitles.org/projects/opensubtitles/wiki/HashSourceCodes#Python
+    """
     longlongformat = '<Q'
     bytesize = struct.calcsize(longlongformat)
     assert bytesize == 8
@@ -49,240 +47,166 @@ def hash_file(filename):
     return '%016x' % hash_val
 
 
-def download(value):
-    ''' Download argument `type` '''
-    try:
-        return int(value)
-    except ValueError:
-        pass
-
-    vals = {'first', 'all', 'best-rating', 'most-downloaded', 'query', 'none'}
-    if value not in vals:
-        raise ArgumentTypeError('Download value %s is not valid' % value)
-
-    return value
-
-
 class OpenSubServer(ServerProxy):
-    ''' Server class to talk to OpenSubtitles server '''
+    """ Server class to talk to OpenSubtitles server """
 
     URI = 'https://api.opensubtitles.org/xml-rpc'
-    AGENT = '%s %s' % (NAME, VERSION)
+    AGENT = 'TemporaryUserAgent'  # For developing, it may change sometime
 
-    def __init__(self, username='', password=''):
-        ''' Creates class and tries to login '''
+    def __init__(self, user, passw, langs):
+        """ Instantiates class """
         super(OpenSubServer, self).__init__(OpenSubServer.URI)
+        self.user = user
+        self.passw = passw
+        self.langs = langs
 
-        login = self.LogIn(username, password, 'en', OpenSubServer.AGENT)
+    def login(self):
+        """ Tries to log in. Raises `RuntimeError` when it fails """
+        login = self.LogIn(self.user, self.passw, 'en', self.AGENT)
 
         if login['status'] != '200 OK':
-            raise RuntimeError('Failed to connect: %s' % login['status'])
+            raise RuntimeError('Failed to log in: %s' % login['status'])
 
         self.token = login['token']
+        return self.token
 
-    def search_by_hash(self, filename, langs):
-        ''' Search by hash for the languages '''
+    def languages(self):
+        """ Gets all languages available in the website """
+        return self.GetSubLanguages('')['data']
+
+    def by_hash(self, filename):
+        """ Search by hash for the languages """
+        # File info
         movie_hash = hash_file(filename)
-
         movie_size = os.path.getsize(filename)
 
+        # Create arguments
         search_args = [{
-            'sublanguageid': ','.join(langs),
+            'sublanguageid': ','.join(self.langs),
             'moviehash': movie_hash,
             'moviebytesize': str(movie_size)
         }]
+
+        # Fetch data
         return self.SearchSubtitles(self.token, search_args)['data']
 
-    def search_by_string(self, strings, langs):
-        ''' Search by string for the languages '''
-        query = ' '.join(strings)
-        search_args = [{
-            'sublanguageid': ','.join(langs),
-            'query': query
-        }]
-        return self.SearchSubtitles(self.token, search_args)['data']
+#     def search_by_string(self, strings, langs):
+#         """ Search by string for the languages """
+#         query = ' '.join(strings)
+#         search_args = [{
+#             'sublanguageid': ','.join(langs),
+#             'query': query
+#         }]
+#         return self.SearchSubtitles(self.token, search_args)['data']
 
-    def search_by_imdb(self, imdb, langs):
-        ''' Search by imdb ID for the languages '''
-        the_id = re.findall(r'(t+)?(\d+)', imdb)[0][1]
-        search_args = [{
-            'sublanguageid': ','.join(langs),
-            'imdbid': the_id
-        }]
-        return self.SearchSubtitles(self.token, search_args)['data']
+#     def search_by_imdb(self, imdb, langs):
+#         """ Search by imdb ID for the languages """
+#         the_id = re.findall(r'(t+)?(\d+)', imdb)[0][1]
+#         search_args = [{
+#             'sublanguageid': ','.join(langs),
+#             'imdbid': the_id
+#         }]
+#         return self.SearchSubtitles(self.token, search_args)['data']
 
-    def download_sub(self, sub):
-        ''' Download from sub object '''
-        # donwloads
+    def _download(self, sub):
+        """ Download subtitle from the sub dict returned form server """
         sub_id = sub['IDSubtitleFile']
         result = self.DownloadSubtitles(self.token, [sub_id])
+
+        # Decompress it
         compressed_sub = result['data'][0]['data']
-
-        # decodes
         decoded_sub = base64.b64decode(compressed_sub)
-
-        # unzips
         unzipped_sub = gzip.decompress(decoded_sub)
 
-        # encodes
+        # To string
         sub_encoding = sub['SubEncoding']
         return unzipped_sub.decode(sub_encoding)
-
-    def get_languages(self, lang=''):
-        ''' Gets all languages available in the website '''
-        return self.GetSubLanguages(lang)['data']
 
 
 class ListLanguagesAction(Action):
     def __call__(self, *args, **kwargs):
-        ''' Gets a list of languages from the server and prints it '''
-        server = OpenSubServer()
-        languages = server.get_languages()
+        """ Gets a list of languages from the server and prints it """
+        server = OpenSubServer('', '', [])
+
+        # Sort by language id
+        languages = server.languages()
+        languages = sorted(languages, key=lambda l: l['SubLanguageID'])
+
+        # Print all
         for lang in languages:
             lang_id = lang['SubLanguageID']
             lang_name = lang['LanguageName']
             print('%s\t%s' % (lang_id, lang_name))
+
+        # Exit gracefully
         raise SystemExit
 
 
 def _create_parser():
-    ''' Creates parser for CLI '''
+    """ Creates parser for CLI """
     parser = ArgumentParser(
         description=(
-            'Subdl is a command-line tool for downloading subtitles from '
-            'opensubtitles.org.'
-            '\n\n'
-            'By default, it will search for English subtitles, display the '
-            'results, download the highest-rated result in the requested '
-            'language and save it to the appropriate filename.'
-        ),
-        formatter_class=RawTextHelpFormatter)
+            'simplesubdl is a program to easily help you download subtitles '
+            'for any video file you have. It does everything automatically.'
+            'It is a simpler version from the, original, `subdl`. This one is '
+            'a rewrite. It uses native python modules to do most of the work. '
+            'For example, argument parsing and the server interatction'
+        )
+    )
     parser.add_argument(
         'files',
-        help='video files to download subtitles for. You may use globs',
-        nargs='+')
+        help='Video files to operate on',
+        nargs='+'
+    )
     parser.add_argument(
         '--version',
-        help='print version and exit',
+        help='Print version and exit',
         action='version',
-        version='%s %s' % (NAME, VERSION))
+        version='alpha'
+    )
     parser.add_argument(
         '--lang',
         nargs='+',
         help=(
-            'languages in 3-letter code. For example: "eng por spa". Use '
-            '"all"for all languages. Defaults to "eng"'
+            'Language, in 3 letter codes. Eg. `eng`, `por` or `spa`. Defaults '
+            'to %(default)s'
         ),
-        default=['eng'])
+        default=['eng']
+    )
     parser.add_argument(
-        '--list-languages',
-        nargs=0,
-        action=ListLanguagesAction,
-        help='list available languages adn exit')
-    parser.add_argument(
-        '--username',
-        metavar='USER',
-        help='opensubtitles.org username. Defaults to ""',
-        default='')
-    parser.add_argument(
-        '--password',
-        metavar='PASS',
-        help='opensubtitles.org password. Defaults to ""',
-        default='')
-    parser.add_argument(
-        '--search',
-        nargs=1,
-        help='use search string to look for subtitles')
-    parser.add_argument(
-        '--download',
-        nargs=1,
-        help=(
-            'ID: Download a particular subtitle by numeric ID\n'
-            'first: Download the first search result [default]\n'
-            'all: Download all search results\n'
-            'best-rating: Download the result with best rating\n'
-            'most-downloaded: Download the most downloaded result\n'
-            'query: Query which search result to download\n'
-            'none: Display search results and exit\n'
-        ),
-        type=download,
-        default='first')
-    parser.add_argument(
-        '--output',
-        help=(
-            'Output to specified output filename.  Can include the\n'
-            'following format specifiers:\n'
-            '{I} subtitle id\n'
-            '{m} movie file base     {M} movie file extension\n'
-            '{s} subtitle file base  {S} subtitle file extension\n'
-            '{l} language (English)  {L} language (2-letter ISO639)\n'
-            'Default is "{m}.{S}"; if multiple languages are searched,\n'
-            'then the default is "{m}.{L}.{S}"; if --download=all, then\n'
-            'the default is "{m}.{L}.{I}.{S}"'))
-    parser.add_argument(
-        '--existing',
-        metavar='ACTION',
-        nargs=1,
-        help=(
-            'abort: Abort if output filename already exists [default]\n'
-            'bypass: Exit gracefully if output filename already exists\n'
-            'overwrite: Overwrite if output filename already exists\n'
-            'query: Query whether to overwrite'))
-    parser.add_argument(
-        '--imdb-id',
-        metavar='ID',
-        help='query by IMDB id. Hash is tried first unless --force-imdb')
-    parser.add_argument(
-        '--force-imdb',
-        action='store_true',
-        help='force IMDB search. --imdb-id must be specified')
-    parser.add_argument(
-        '--force-filename',
-        action='store_true',
-        help='force search using filename')
-    parser.add_argument(
-        '--filter',
-        action='store_true',
-        help='filter blacklisted texts from subtitle')
-    parser.add_argument(
-        '--interactive',
-        '-i',
-        action='store_true',
-        help='equivalent to --download=query --existing=query')
-
+        '--list-langs',
+        help='Lists all languages available and exits',
+        action=ListLanguagesAction
+    )
     return parser
 
 
 if __name__ == '__main__':
     parser = _create_parser()
-    options = parser.parse_args()
+    parsed = parser.parse_args()
 
-    server = OpenSubServer(options.username, options.password)
-    for file in options.files:
-        _, name = os.path.split(file)
+    # Create server
+    server = OpenSubServer('', '', parsed.lang)
+    server.login()
 
-        # search
-        if options.search is not None:
-            result = server.search_by_string(options.search, options.lang)
-        # imdb id
-        elif options.imdb is not None:
-            result = server.search_by_imdb(options.imdb, options.lang)
-        # hash
-        else:
-            result = server.search_by_hash(file, options.lang)
+    for file in parsed.files:
+        # Get subs data
+        subs = server.by_hash(file)
 
-        # no results
-        if len(result) == 0:
+        # No results
+        if len(subs) == 0:
             continue
 
-        # best scored
-        best_scored_sub = max(result, key=lambda s: s['Score'])
+        # Sort by score
+        subs = sorted(subs, key=lambda s: s['Score'], reverse=True)
 
-        # downloading
-        sub_as_string = server.download_sub(best_scored_sub)
+        # Download
+        data = server._download(subs[0])
 
-        # saving
-        path, _ = os.path.splitext(file)
-        filename_out = '%s.%s' % (path, best_scored_sub['SubFormat'])
-        with open(filename_out, 'w') as f:
-            f.write(sub_as_string)
+        # Create filename
+        filename, _ = os.path.splitext(file)
+        filename = f'{filename}.srt'
+
+        # Write
+        with open(filename, 'wt') as sub_file:
+            sub_file.write(data)
