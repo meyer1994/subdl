@@ -181,6 +181,7 @@ def _create_parser():
     )
     parser.add_argument(
         '--list-langs',
+        nargs=0,
         help='Lists all languages available and exits',
         action=ListLanguagesAction
     )
@@ -220,8 +221,11 @@ if __name__ == '__main__':
     server.login()
 
     for file in parsed.files:
+        logger.info('File: %s', file)
+
         # Get subs data
         subs = server.by_hash(file)
+        logger.info('Total found: %d', len(subs))
 
         # No results
         if len(subs) == 0:
@@ -231,6 +235,7 @@ if __name__ == '__main__':
         subs = sorted(subs, key=lambda s: s['Score'], reverse=True)
 
         # Download
+        logger.info('Downloading sub: %s', subs[0]['IDSubtitleFile'])
         data = server._download(subs[0])
 
         # Create filename
@@ -238,5 +243,6 @@ if __name__ == '__main__':
         filename = f'{filename}.srt'
 
         # Write
+        logger.info('Saving to: %s', filename)
         with open(filename, 'wt') as sub_file:
             sub_file.write(data)
